@@ -96,11 +96,12 @@ class BaseScheduler(LoggingConfigurable):
     )
 
     def __init__(
-        self, root_dir: str, environments_manager: Type[EnvironmentManager], config=None, **kwargs
+        self, root_dir: str, environments_manager: Type[EnvironmentManager], config=None, job_schedules_notifier=None, **kwargs
     ):
         super().__init__(config=config, **kwargs)
         self.root_dir = root_dir
         self.environments_manager = environments_manager
+        self.job_schedules_notifier = job_schedules_notifier
 
     def create_job(self, model: CreateJob) -> str:
         """Creates a new job record, may trigger execution of the job.
@@ -604,6 +605,10 @@ class Scheduler(BaseScheduler):
                         session.commit()
                         break
 
+    def notify_job_schedules(self):
+        if self.job_schedules_notifier:
+            self.job_schedules_notifier(self.list_job_definitions(ListJobDefinitionsQuery()))
+
     def create_job_definition(self, model: CreateJobDefinition) -> str:
         with self.db_session() as session:
             if not self.file_exists(model.input_uri):
@@ -630,6 +635,8 @@ class Scheduler(BaseScheduler):
 
         if self.task_runner and job_definition_schedule:
             self.task_runner.add_job_definition(job_definition_id)
+
+        self.notify_job_schedules()
 
         return job_definition_id
 
@@ -679,6 +686,8 @@ class Scheduler(BaseScheduler):
         if self.task_runner and schedule:
             self.task_runner.update_job_definition(job_definition_id, model)
 
+        self.notify_job_schedules()
+
     def delete_job_definition(self, job_definition_id: str):
         with self.db_session() as session:
             jobs = session.query(Job).filter(Job.job_definition_id == job_definition_id)
@@ -698,6 +707,8 @@ class Scheduler(BaseScheduler):
 
         if self.task_runner and schedule:
             self.task_runner.delete_job_definition(job_definition_id)
+
+        self.notify_job_schedules()
 
     def get_job_definition(self, job_definition_id: str) -> DescribeJobDefinition:
         with self.db_session() as session:

@@ -1,10 +1,15 @@
 import asyncio
 
+from datetime import datetime, timezone
+from os import environ
+from requests import post
+
 from jupyter_core.paths import jupyter_data_dir
 from jupyter_server.extension.application import ExtensionApp
 from jupyter_server.transutils import _i18n
 from traitlets import Bool, Type, Unicode, default
 
+from jupyter_scheduler.models import ListJobDefinitionsResponse
 from jupyter_scheduler.orm import create_tables
 
 from .handlers import (
@@ -78,6 +83,7 @@ class SchedulerApp(ExtensionApp):
             environments_manager=environments_manager,
             db_url=self.db_url,
             config=self.config,
+            job_schedules_notifier=self.job_schedules_notifier,
         )
 
         job_files_manager = self.job_files_manager_class(scheduler=scheduler)
@@ -91,3 +97,30 @@ class SchedulerApp(ExtensionApp):
         if scheduler.task_runner:
             loop = asyncio.get_event_loop()
             loop.create_task(scheduler.task_runner.start())
+
+    def job_schedules_notifier(self, list_job_definitions_response:ListJobDefinitionsResponse):
+        self.log.info("job_definitions = %s", list_job_definitions_response.job_definitions)
+        url = environ["JUPYTERHUB_ACTIVITY_URL"]
+        token = environ["JUPYTERHUB_API_TOKEN"]
+        headers = {
+            "Authorization": f"token {token}"
+        }
+
+        job_definitions = {}
+
+        for job_definition in list_job_definitions_response.job_definitions:
+            job_definitions[job_definition.job_definition_id] = {
+                "schedule": job_definition.schedule,
+                "timezone": job_definition.timezone
+            }
+
+        data = {
+            "servers": {
+                "": {
+                    "last_activity": datetime.now(timezone.utc).isoformat(timespec="seconds")
+                }
+            },
+            "scheduler_options": job_definitions
+        }
+
+        post(url, json=data, headers=headers)
